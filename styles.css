@@ -139,6 +139,22 @@ h1 {
   background: #a68f7a;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.autoplay-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  width: 100%;
+}
+
+.autoplay-actions {
+  width: 100%;
+}
+
 .speed-control {
   display: flex;
   align-items: center;
@@ -246,6 +262,80 @@ h1 {
   line-height: 1.5;
 }
 
+.modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 20;
+  padding: 20px;
+}
+
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(60, 58, 50, 0.32);
+  backdrop-filter: blur(4px);
+}
+
+.modal-card {
+  position: relative;
+  width: min(100%, 420px);
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 24px;
+  padding: 24px;
+  box-shadow: var(--shadow);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.icon-button {
+  border: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: rgba(166, 143, 122, 0.14);
+  color: var(--text);
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+
+.redeem-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.redeem-label {
+  font-weight: 700;
+}
+
+.redeem-row {
+  display: flex;
+  gap: 10px;
+}
+
+.redeem-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(143, 122, 102, 0.22);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--text);
+}
+
 @keyframes pop {
   from {
     transform: scale(0.9);
@@ -282,6 +372,10 @@ h1 {
     flex-direction: column;
   }
 
+  .autoplay-panel {
+    align-items: stretch;
+  }
+
   .button {
     width: 100%;
   }
@@ -292,6 +386,10 @@ h1 {
 
   .speed-control select {
     flex: 1;
+  }
+
+  .redeem-row {
+    flex-direction: column;
   }
 
   .score-card strong {

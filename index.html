@@ -17,16 +17,21 @@
           <div class="controls">
             <div class="button-group">
               <button id="restart-button" class="button" type="button">Restart</button>
-              <button id="autoplay-button" class="button button-secondary" type="button">Auto Play</button>
+              <button id="settings-button" class="button button-secondary" type="button">Settings</button>
             </div>
-            <label class="speed-control" for="autoplay-speed">
-              <span>Speed</span>
-              <select id="autoplay-speed">
-                <option value="220">Slow</option>
-                <option value="120" selected>Normal</option>
-                <option value="50">Fast</option>
-              </select>
-            </label>
+            <div id="autoplay-panel" class="autoplay-panel hidden">
+              <div class="button-group autoplay-actions">
+                <button id="autoplay-button" class="button button-secondary" type="button">Auto Play</button>
+              </div>
+              <label class="speed-control" for="autoplay-speed">
+                <span>Speed</span>
+                <select id="autoplay-speed">
+                  <option value="220">Slow</option>
+                  <option value="120" selected>Normal</option>
+                  <option value="50">Fast</option>
+                </select>
+              </label>
+            </div>
             <p id="autoplay-status" class="status-text">Manual play</p>
           </div>
         </header>
@@ -54,6 +59,24 @@
             </div>
           </div>
         </section>
+
+        <div id="settings-modal" class="modal hidden" aria-hidden="true">
+          <div class="modal-backdrop" data-close-settings="true"></div>
+          <section class="modal-card" aria-labelledby="settings-title">
+            <div class="modal-header">
+              <h2 id="settings-title">Settings</h2>
+              <button id="close-settings-button" class="icon-button" type="button" aria-label="Close settings">×</button>
+            </div>
+            <div class="redeem-panel">
+              <label class="redeem-label" for="redeem-code-input">Redeem code</label>
+              <div class="redeem-row">
+                <input id="redeem-code-input" class="redeem-input" type="text" autocomplete="off" spellcheck="false" placeholder="Enter your code" />
+                <button id="redeem-code-button" class="button" type="button">Unlock</button>
+              </div>
+              <p id="redeem-status" class="status-text">Enter a code to unlock extra tools.</p>
+            </div>
+          </section>
+        </div>
       </section>
     </main>
 

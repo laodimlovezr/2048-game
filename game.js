@@ -2,9 +2,16 @@ const boardElement = document.getElementById('game-board');
 const scoreElement = document.getElementById('score');
 const bestScoreElement = document.getElementById('best-score');
 const restartButton = document.getElementById('restart-button');
+const settingsButton = document.getElementById('settings-button');
+const autoplayPanel = document.getElementById('autoplay-panel');
 const autoplayButton = document.getElementById('autoplay-button');
 const autoplaySpeedSelect = document.getElementById('autoplay-speed');
 const autoplayStatusElement = document.getElementById('autoplay-status');
+const settingsModal = document.getElementById('settings-modal');
+const closeSettingsButton = document.getElementById('close-settings-button');
+const redeemCodeInput = document.getElementById('redeem-code-input');
+const redeemCodeButton = document.getElementById('redeem-code-button');
+const redeemStatusElement = document.getElementById('redeem-status');
 const overlayElement = document.getElementById('game-overlay');
 const overlayTitleElement = document.getElementById('overlay-title');
 const overlayMessageElement = document.getElementById('overlay-message');
@@ -12,6 +19,8 @@ const overlayButton = document.getElementById('overlay-button');
 
 const GRID_SIZE = 4;
 const BEST_SCORE_KEY = '2048-best-score';
+const AUTOPLAY_UNLOCK_KEY = '2048-autoplay-unlocked';
+const AUTOPLAY_UNLOCK_CODE = 'xiaomingzuishuai';
 const DIRECTIONS = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'];
 const DIRECTION_LABELS = {
   ArrowUp: 'Up',
@@ -31,6 +40,8 @@ const state = {
   autoPlayTimer: null,
   autoPlayDelay: Number(autoplaySpeedSelect?.value ?? 120),
   lastAutoMove: null,
+  autoplayUnlocked: window.localStorage.getItem(AUTOPLAY_UNLOCK_KEY) === 'true',
+  settingsOpen: false,
 };
 
 function createEmptyBoard() {
@@ -45,6 +56,10 @@ function loadBestScore() {
 
 function saveBestScore() {
   window.localStorage.setItem(BEST_SCORE_KEY, String(state.bestScore));
+}
+
+function saveAutoplayUnlocked() {
+  window.localStorage.setItem(AUTOPLAY_UNLOCK_KEY, String(state.autoplayUnlocked));
 }
 
 function cloneBoard(board) {
@@ -391,6 +406,34 @@ function updateBestScore() {
   }
 }
 
+function openSettings() {
+  state.settingsOpen = true;
+  settingsModal.classList.remove('hidden');
+  settingsModal.setAttribute('aria-hidden', 'false');
+  redeemCodeInput.focus();
+}
+
+function closeSettings() {
+  state.settingsOpen = false;
+  settingsModal.classList.add('hidden');
+  settingsModal.setAttribute('aria-hidden', 'true');
+}
+
+function unlockAutoplay() {
+  const value = redeemCodeInput.value.trim();
+
+  if (value !== AUTOPLAY_UNLOCK_CODE) {
+    redeemStatusElement.textContent = 'Invalid code. Please try again.';
+    return;
+  }
+
+  state.autoplayUnlocked = true;
+  saveAutoplayUnlocked();
+  redeemStatusElement.textContent = 'Unlocked successfully. Extra tools are now available.';
+  redeemCodeInput.value = '';
+  renderControls();
+}
+
 function stopAutoPlay() {
   state.autoPlaying = false;
   state.lastAutoMove = null;
@@ -452,6 +495,7 @@ function renderOverlay() {
 }
 
 function renderControls() {
+  autoplayPanel.classList.toggle('hidden', !state.autoplayUnlocked);
   autoplayButton.textContent = state.autoPlaying ? 'Stop Auto' : 'Auto Play';
   autoplayButton.setAttribute('aria-pressed', String(state.autoPlaying));
   autoplaySpeedSelect.disabled = state.autoPlaying;
@@ -464,6 +508,11 @@ function renderControls() {
   if (state.autoPlaying) {
     const label = state.lastAutoMove ? `Auto playing · ${DIRECTION_LABELS[state.lastAutoMove]}` : 'Auto playing · Thinking';
     autoplayStatusElement.textContent = label;
+    return;
+  }
+
+  if (state.autoplayUnlocked) {
+    autoplayStatusElement.textContent = 'Extra tools unlocked';
     return;
   }
 
@@ -511,7 +560,7 @@ function scheduleAutoPlayTick() {
 }
 
 function startAutoPlay() {
-  if (state.autoPlaying || state.gameOver) {
+  if (!state.autoplayUnlocked || state.autoPlaying || state.gameOver) {
     renderControls();
     return;
   }
@@ -571,6 +620,11 @@ function applyMove(direction) {
 }
 
 function handleKeydown(event) {
+  if (event.key === 'Escape' && state.settingsOpen) {
+    closeSettings();
+    return;
+  }
+
   if (!DIRECTIONS.includes(event.key)) {
     return;
   }
@@ -585,6 +639,19 @@ function handleKeydown(event) {
 }
 
 restartButton.addEventListener('click', startGame);
+settingsButton.addEventListener('click', openSettings);
+closeSettingsButton.addEventListener('click', closeSettings);
+settingsModal.addEventListener('click', (event) => {
+  if (event.target.dataset.closeSettings === 'true') {
+    closeSettings();
+  }
+});
+redeemCodeButton.addEventListener('click', unlockAutoplay);
+redeemCodeInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    unlockAutoplay();
+  }
+});
 autoplayButton.addEventListener('click', () => {
   if (state.autoPlaying) {
     stopAutoPlay();
@@ -593,11 +660,9 @@ autoplayButton.addEventListener('click', () => {
 
   startAutoPlay();
 });
-
 autoplaySpeedSelect.addEventListener('change', (event) => {
   state.autoPlayDelay = Number(event.target.value);
 });
-
 overlayButton.addEventListener('click', () => {
   if (state.gameOver) {
     startGame();
@@ -610,7 +675,6 @@ overlayButton.addEventListener('click', () => {
     renderControls();
   }
 });
-
 window.addEventListener('keydown', handleKeydown);
 
 state.bestScore = loadBestScore();
@@ -624,4 +688,9 @@ window.__2048Debug = {
   startAutoPlay,
   stopAutoPlay,
   startGame,
+  unlockAutoplay: () => {
+    state.autoplayUnlocked = true;
+    saveAutoplayUnlocked();
+    renderControls();
+  },
 };
