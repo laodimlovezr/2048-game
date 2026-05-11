@@ -47,10 +47,11 @@
           </div>
         </section>
 
-        <p class="instructions">Use your arrow keys to move the tiles.</p>
+        <p id="instructions-text" class="instructions">Use your arrow keys to move the tiles.</p>
 
         <section class="board-wrapper">
           <div id="game-board" class="board" aria-label="2048 game board"></div>
+          <div id="swipe-hint" class="swipe-hint"></div>
           <div id="game-overlay" class="overlay hidden" aria-live="polite">
             <div class="overlay-card">
               <h2 id="overlay-title"></h2>
@@ -60,7 +61,7 @@
           </div>
         </section>
 
-        <div id="settings-modal" class="modal hidden" aria-hidden="true">
+        <div id="settings-modal" class="modal" aria-hidden="true">
           <div class="modal-backdrop" data-close-settings="true"></div>
           <section class="modal-card" aria-labelledby="settings-title">
             <div class="modal-header">

@@ -1,6 +1,8 @@
+/* ── DOM refs ── */
 const boardElement = document.getElementById('game-board');
 const scoreElement = document.getElementById('score');
 const bestScoreElement = document.getElementById('best-score');
+const instructionsElement = document.getElementById('instructions-text');
 const restartButton = document.getElementById('restart-button');
 const settingsButton = document.getElementById('settings-button');
 const autoplayPanel = document.getElementById('autoplay-panel');
@@ -16,20 +18,21 @@ const overlayElement = document.getElementById('game-overlay');
 const overlayTitleElement = document.getElementById('overlay-title');
 const overlayMessageElement = document.getElementById('overlay-message');
 const overlayButton = document.getElementById('overlay-button');
+const swipeHintElement = document.getElementById('swipe-hint');
 
+/* ── constants ── */
 const GRID_SIZE = 4;
 const BEST_SCORE_KEY = '2048-best-score';
 const AUTOPLAY_UNLOCK_KEY = '2048-autoplay-unlocked';
 const AUTOPLAY_UNLOCK_CODE = 'xiaomingzuishuai';
 const DIRECTIONS = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'];
-const DIRECTION_LABELS = {
-  ArrowUp: 'Up',
-  ArrowRight: 'Right',
-  ArrowDown: 'Down',
-  ArrowLeft: 'Left',
-};
+const DIRECTION_LABELS = { ArrowUp: 'Up', ArrowRight: 'Right', ArrowDown: 'Down', ArrowLeft: 'Left' };
+const SWIPE_HINT_ARROWS = { ArrowUp: '↑', ArrowRight: '→', ArrowDown: '↓', ArrowLeft: '←' };
 const SWIPE_THRESHOLD = 28;
+const SWIPE_COOLDOWN = 180;
+const IS_TOUCH_DEVICE = 'ontouchstart' in window || window.matchMedia('(pointer: coarse)').matches;
 
+/* ── global state ── */
 const state = {
   size: GRID_SIZE,
   board: [],
@@ -45,24 +48,69 @@ const state = {
   settingsOpen: false,
   touchStartX: null,
   touchStartY: null,
+  lastSwipeTime: 0,
 };
 
+/* ── tile metadata (for animation tracking) ── */
+let nextTileId = 1;
+const tileMeta = {};       /* "row-col" → { id, value } */
+const tileElements = {};   /* id → HTMLElement */
+let firstRenderDone = false;
+
+/* tile id helpers */
+function getTileKey(row, col) { return `${row}-${col}`; }
+
+function buildTileMeta(newBoard, oldBoard, spawnPos) {
+  const newMeta = {};
+  const claimed = new Set();
+
+  for (let col = 0; col < state.size; col += 1) {
+    for (let row = 0; row < state.size; row += 1) {
+      const value = newBoard[row][col];
+      if (value === 0) continue;
+      const key = getTileKey(row, col);
+
+      if (spawnPos && row === spawnPos.row && col === spawnPos.col) {
+        newMeta[key] = { id: nextTileId, value, isNew: true };
+        nextTileId += 1;
+        continue;
+      }
+
+      if (oldBoard[row][col] === value) {
+        const existing = tileMeta[key];
+        newMeta[key] = { id: existing ? existing.id : nextTileId, value };
+        if (!existing) nextTileId += 1;
+        continue;
+      }
+
+      let found = false;
+      for (let or = 0; or < state.size && !found; or += 1) {
+        for (let oc = 0; oc < state.size && !found; oc += 1) {
+          const oldKey = getTileKey(or, oc);
+          if (claimed.has(oldKey)) continue;
+          if (oldBoard[or][oc] === value && tileMeta[oldKey]) {
+            newMeta[key] = { id: tileMeta[oldKey].id, value, movedFrom: { row: or, col: oc } };
+            claimed.add(oldKey);
+            found = true;
+          }
+        }
+      }
+
+      if (!found) {
+        newMeta[key] = { id: nextTileId, value, isMerge: true };
+        nextTileId += 1;
+      }
+    }
+  }
+
+  Object.keys(tileMeta).forEach((k) => delete tileMeta[k]);
+  Object.assign(tileMeta, newMeta);
+  return newMeta;
+}
+
+/* ── board utilities ── */
 function createEmptyBoard() {
   return Array.from({ length: state.size }, () => Array(state.size).fill(0));
-}
-
-function loadBestScore() {
-  const storedScore = window.localStorage.getItem(BEST_SCORE_KEY);
-  const parsedScore = Number.parseInt(storedScore ?? '0', 10);
-  return Number.isNaN(parsedScore) ? 0 : parsedScore;
-}
-
-function saveBestScore() {
-  window.localStorage.setItem(BEST_SCORE_KEY, String(state.bestScore));
-}
-
-function saveAutoplayUnlocked() {
-  window.localStorage.setItem(AUTOPLAY_UNLOCK_KEY, String(state.autoplayUnlocked));
 }
 
 function cloneBoard(board) {
@@ -71,156 +119,111 @@ function cloneBoard(board) {
 
 function getEmptyCells(board) {
   const cells = [];
-
   for (let row = 0; row < state.size; row += 1) {
     for (let column = 0; column < state.size; column += 1) {
-      if (board[row][column] === 0) {
-        cells.push({ row, column });
-      }
+      if (board[row][column] === 0) cells.push({ row, column });
     }
   }
-
   return cells;
 }
 
 function addRandomTile(board) {
-  const emptyCells = getEmptyCells(board);
-
-  if (emptyCells.length === 0) {
-    return false;
-  }
-
-  const targetCell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
-  board[targetCell.row][targetCell.column] = Math.random() < 0.9 ? 2 : 4;
-  return true;
+  const cells = getEmptyCells(board);
+  if (cells.length === 0) return null;
+  const target = cells[Math.floor(Math.random() * cells.length)];
+  board[target.row][target.column] = Math.random() < 0.9 ? 2 : 4;
+  return target;
 }
 
+/* ── core move logic ── */
 function slideAndMerge(line) {
-  const tiles = line.filter((value) => value !== 0);
-  const mergedTiles = [];
-  let gainedScore = 0;
+  const tiles = line.filter((v) => v !== 0);
+  const merged = [];
+  let score = 0;
 
-  for (let index = 0; index < tiles.length; index += 1) {
-    const currentValue = tiles[index];
-    const nextValue = tiles[index + 1];
-
-    if (currentValue === nextValue) {
-      const mergedValue = currentValue * 2;
-      mergedTiles.push(mergedValue);
-      gainedScore += mergedValue;
-      index += 1;
+  for (let i = 0; i < tiles.length; i += 1) {
+    if (tiles[i] === tiles[i + 1]) {
+      merged.push(tiles[i] * 2);
+      score += tiles[i] * 2;
+      i += 1;
       continue;
     }
-
-    mergedTiles.push(currentValue);
+    merged.push(tiles[i]);
   }
 
-  while (mergedTiles.length < state.size) {
-    mergedTiles.push(0);
-  }
+  while (merged.length < state.size) merged.push(0);
 
-  const changed = mergedTiles.some((value, index) => value !== line[index]);
-  return { line: mergedTiles, score: gainedScore, changed };
+  const changed = merged.some((v, i) => v !== line[i]);
+  return { line: merged, score, changed };
 }
 
 function transpose(board) {
-  return board[0].map((_, column) => board.map((row) => row[column]));
+  return board[0].map((_, c) => board.map((row) => row[c]));
 }
 
 function reverseRows(board) {
   return board.map((row) => [...row].reverse());
 }
 
-function boardsEqual(firstBoard, secondBoard) {
-  return firstBoard.every((row, rowIndex) => row.every((value, columnIndex) => value === secondBoard[rowIndex][columnIndex]));
+function boardsEqual(a, b) {
+  return a.every((row, ri) => row.every((v, ci) => v === b[ri][ci]));
 }
 
 function moveLeft(board) {
-  let gainedScore = 0;
+  let score = 0;
   let changed = false;
-  const nextBoard = board.map((row) => {
-    const result = slideAndMerge(row);
-    gainedScore += result.score;
-    changed = changed || result.changed;
-    return result.line;
+  const next = board.map((row) => {
+    const r = slideAndMerge(row);
+    score += r.score;
+    changed = changed || r.changed;
+    return r.line;
   });
-
-  return { board: nextBoard, score: gainedScore, changed };
+  return { board: next, score, changed };
 }
 
 function moveRight(board) {
-  const reversedBoard = reverseRows(board);
-  const result = moveLeft(reversedBoard);
-  return {
-    board: reverseRows(result.board),
-    score: result.score,
-    changed: result.changed,
-  };
+  const rev = reverseRows(board);
+  const r = moveLeft(rev);
+  return { board: reverseRows(r.board), score: r.score, changed: r.changed };
 }
 
 function moveUp(board) {
-  const transposedBoard = transpose(board);
-  const result = moveLeft(transposedBoard);
-  return {
-    board: transpose(result.board),
-    score: result.score,
-    changed: result.changed,
-  };
+  const t = transpose(board);
+  const r = moveLeft(t);
+  return { board: transpose(r.board), score: r.score, changed: r.changed };
 }
 
 function moveDown(board) {
-  const transposedBoard = transpose(board);
-  const result = moveRight(transposedBoard);
-  return {
-    board: transpose(result.board),
-    score: result.score,
-    changed: result.changed,
-  };
+  const t = transpose(board);
+  const r = moveRight(t);
+  return { board: transpose(r.board), score: r.score, changed: r.changed };
 }
 
 function simulateMove(board, direction) {
-  const workingBoard = cloneBoard(board);
-
-  if (direction === 'ArrowLeft') {
-    return moveLeft(workingBoard);
-  }
-
-  if (direction === 'ArrowRight') {
-    return moveRight(workingBoard);
-  }
-
-  if (direction === 'ArrowUp') {
-    return moveUp(workingBoard);
-  }
-
-  if (direction === 'ArrowDown') {
-    return moveDown(workingBoard);
-  }
-
-  return { board: workingBoard, score: 0, changed: false };
+  const wb = cloneBoard(board);
+  if (direction === 'ArrowLeft') return moveLeft(wb);
+  if (direction === 'ArrowRight') return moveRight(wb);
+  if (direction === 'ArrowUp') return moveUp(wb);
+  if (direction === 'ArrowDown') return moveDown(wb);
+  return { board: wb, score: 0, changed: false };
 }
 
+/* ── game-over utilities ── */
 function has2048(board) {
-  return board.some((row) => row.some((value) => value === 2048));
+  return board.some((row) => row.some((v) => v === 2048));
 }
 
 function hasEmptyCell(board) {
-  return board.some((row) => row.some((value) => value === 0));
+  return board.some((row) => row.some((v) => v === 0));
 }
 
 function canMerge(board) {
   for (let row = 0; row < state.size; row += 1) {
-    for (let column = 0; column < state.size; column += 1) {
-      const currentValue = board[row][column];
-      const rightValue = board[row][column + 1];
-      const bottomValue = board[row + 1]?.[column];
-
-      if (currentValue !== 0 && (currentValue === rightValue || currentValue === bottomValue)) {
-        return true;
-      }
+    for (let col = 0; col < state.size; col += 1) {
+      const v = board[row][col];
+      if (v !== 0 && (v === board[row][col + 1] || v === (board[row + 1] || [])[col])) return true;
     }
   }
-
   return false;
 }
 
@@ -228,72 +231,41 @@ function isGameOver(board) {
   return !hasEmptyCell(board) && !canMerge(board);
 }
 
+/* ── AI ── */
 function countPossibleMerges(board) {
-  let merges = 0;
-
+  let n = 0;
   for (let row = 0; row < state.size; row += 1) {
-    for (let column = 0; column < state.size; column += 1) {
-      const currentValue = board[row][column];
-      if (currentValue === 0) {
-        continue;
-      }
-
-      if (board[row][column + 1] === currentValue) {
-        merges += 1;
-      }
-
-      if (board[row + 1]?.[column] === currentValue) {
-        merges += 1;
-      }
+    for (let col = 0; col < state.size; col += 1) {
+      if (board[row][col] === 0) continue;
+      if (board[row][col + 1] === board[row][col]) n += 1;
+      if ((board[row + 1] || [])[col] === board[row][col]) n += 1;
     }
   }
-
-  return merges;
+  return n;
 }
 
 function calculateMonotonicity(board) {
   let total = 0;
-
   for (const row of board) {
-    for (let index = 0; index < row.length - 1; index += 1) {
-      total += row[index] >= row[index + 1] ? 1 : -1;
-    }
+    for (let i = 0; i < row.length - 1; i += 1) total += row[i] >= row[i + 1] ? 1 : -1;
   }
-
-  const transposed = transpose(board);
-  for (const column of transposed) {
-    for (let index = 0; index < column.length - 1; index += 1) {
-      total += column[index] >= column[index + 1] ? 1 : -1;
-    }
+  const t = transpose(board);
+  for (const col of t) {
+    for (let i = 0; i < col.length - 1; i += 1) total += col[i] >= col[i + 1] ? 1 : -1;
   }
-
   return total;
 }
 
 function calculateSmoothness(board) {
   let penalty = 0;
-
   for (let row = 0; row < state.size; row += 1) {
-    for (let column = 0; column < state.size; column += 1) {
-      const currentValue = board[row][column];
-      if (currentValue === 0) {
-        continue;
-      }
-
-      const currentLog = Math.log2(currentValue);
-      const rightValue = board[row][column + 1];
-      const bottomValue = board[row + 1]?.[column];
-
-      if (rightValue) {
-        penalty += Math.abs(currentLog - Math.log2(rightValue));
-      }
-
-      if (bottomValue) {
-        penalty += Math.abs(currentLog - Math.log2(bottomValue));
-      }
+    for (let col = 0; col < state.size; col += 1) {
+      if (board[row][col] === 0) continue;
+      const cl = Math.log2(board[row][col]);
+      if (board[row][col + 1]) penalty += Math.abs(cl - Math.log2(board[row][col + 1]));
+      if ((board[row + 1] || [])[col]) penalty += Math.abs(cl - Math.log2((board[row + 1] || [])[col]));
     }
   }
-
   return -penalty;
 }
 
@@ -304,188 +276,225 @@ function calculateCornerScore(board) {
 }
 
 function evaluateBoard(board) {
-  const emptyCells = getEmptyCells(board).length;
-  const possibleMerges = countPossibleMerges(board);
-  const monotonicity = calculateMonotonicity(board);
-  const smoothness = calculateSmoothness(board);
-  const maxTile = Math.max(...board.flat());
-  const cornerScore = calculateCornerScore(board);
-
   return (
-    emptyCells * 280 +
-    possibleMerges * 110 +
-    monotonicity * 16 +
-    smoothness * 22 +
-    cornerScore * 2.4 +
-    Math.log2(maxTile || 1) * 90
+    getEmptyCells(board).length * 280 +
+    countPossibleMerges(board) * 110 +
+    calculateMonotonicity(board) * 16 +
+    calculateSmoothness(board) * 22 +
+    calculateCornerScore(board) * 2.4 +
+    Math.log2(Math.max(...board.flat()) || 1) * 90
   );
 }
 
 function getSearchDepth(board) {
-  const emptyCells = getEmptyCells(board).length;
-
-  if (emptyCells >= 8) {
-    return 3;
-  }
-
-  if (emptyCells >= 5) {
-    return 4;
-  }
-
+  const n = getEmptyCells(board).length;
+  if (n >= 8) return 3;
+  if (n >= 5) return 4;
   return 5;
 }
 
-function expectimax(board, depth, isChanceTurn) {
-  if (depth === 0 || isGameOver(board)) {
-    return evaluateBoard(board);
-  }
+function expectimax(board, depth, isChance) {
+  if (depth === 0 || isGameOver(board)) return evaluateBoard(board);
 
-  if (!isChanceTurn) {
-    let bestScore = Number.NEGATIVE_INFINITY;
-    let foundMove = false;
-
-    for (const direction of DIRECTIONS) {
-      const result = simulateMove(board, direction);
-      if (!result.changed) {
-        continue;
-      }
-
-      foundMove = true;
-      const moveScore = result.score * 8 + expectimax(result.board, depth - 1, true);
-      if (moveScore > bestScore) {
-        bestScore = moveScore;
-      }
+  if (!isChance) {
+    let best = Number.NEGATIVE_INFINITY;
+    let found = false;
+    for (const dir of DIRECTIONS) {
+      const r = simulateMove(board, dir);
+      if (!r.changed) continue;
+      found = true;
+      const score = r.score * 8 + expectimax(r.board, depth - 1, true);
+      if (score > best) best = score;
     }
-
-    return foundMove ? bestScore : evaluateBoard(board);
+    return found ? best : evaluateBoard(board);
   }
 
-  const emptyCells = getEmptyCells(board);
-  if (emptyCells.length === 0) {
-    return expectimax(board, depth - 1, false);
+  const cells = getEmptyCells(board);
+  if (cells.length === 0) return expectimax(board, depth - 1, false);
+
+  let expected = 0;
+  const p = 1 / cells.length;
+  for (const cell of cells) {
+    const b2 = cloneBoard(board);
+    b2[cell.row][cell.column] = 2;
+    expected += p * 0.9 * expectimax(b2, depth - 1, false);
+    const b4 = cloneBoard(board);
+    b4[cell.row][cell.column] = 4;
+    expected += p * 0.1 * expectimax(b4, depth - 1, false);
   }
-
-  let expectedScore = 0;
-  const probabilityPerCell = 1 / emptyCells.length;
-
-  for (const cell of emptyCells) {
-    const boardWithTwo = cloneBoard(board);
-    boardWithTwo[cell.row][cell.column] = 2;
-    expectedScore += probabilityPerCell * 0.9 * expectimax(boardWithTwo, depth - 1, false);
-
-    const boardWithFour = cloneBoard(board);
-    boardWithFour[cell.row][cell.column] = 4;
-    expectedScore += probabilityPerCell * 0.1 * expectimax(boardWithFour, depth - 1, false);
-  }
-
-  return expectedScore;
+  return expected;
 }
 
 function getBestMove(board) {
   const depth = getSearchDepth(board);
-  let bestDirection = null;
+  let bestDir = null;
   let bestScore = Number.NEGATIVE_INFINITY;
-
-  for (const direction of DIRECTIONS) {
-    const result = simulateMove(board, direction);
-    if (!result.changed) {
-      continue;
-    }
-
-    const moveValue = result.score * 10 + expectimax(result.board, depth, true);
-    if (moveValue > bestScore) {
-      bestScore = moveValue;
-      bestDirection = direction;
-    }
+  for (const dir of DIRECTIONS) {
+    const r = simulateMove(board, dir);
+    if (!r.changed) continue;
+    const score = r.score * 10 + expectimax(r.board, depth, true);
+    if (score > bestScore) { bestScore = score; bestDir = dir; }
   }
-
-  return bestDirection;
+  return bestDir;
 }
+
+/* ── persistence ── */
+function loadBestScore() {
+  const s = window.localStorage.getItem(BEST_SCORE_KEY);
+  const n = Number.parseInt(s ?? '0', 10);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+function saveBestScore() { window.localStorage.setItem(BEST_SCORE_KEY, String(state.bestScore)); }
+function saveAutoplayUnlocked() { window.localStorage.setItem(AUTOPLAY_UNLOCK_KEY, String(state.autoplayUnlocked)); }
 
 function updateBestScore() {
-  if (state.score > state.bestScore) {
-    state.bestScore = state.score;
-    saveBestScore();
-  }
+  if (state.score > state.bestScore) { state.bestScore = state.score; saveBestScore(); }
 }
 
-function openSettings() {
-  state.settingsOpen = true;
-  settingsModal.classList.remove('hidden');
-  settingsModal.setAttribute('aria-hidden', 'false');
-  redeemCodeInput.focus();
+/* ── animation helpers ── */
+function getCellUnit() {
+  const style = getComputedStyle(boardElement);
+  const gap = parseFloat(style.gap) || state.size === 4 ? 8 : 12;
+  const padding = parseFloat(style.paddingLeft) || 0;
+  const boardSize = boardElement.getBoundingClientRect().width;
+  const inner = boardSize - padding * 2;
+  return (inner - gap * (state.size - 1)) / state.size + gap;
 }
 
-function closeSettings() {
-  state.settingsOpen = false;
-  settingsModal.classList.add('hidden');
-  settingsModal.setAttribute('aria-hidden', 'true');
+function animateSlide(element, fromRow, fromCol, toRow, toCol) {
+  const unit = getCellUnit();
+  element.style.setProperty('--slide-x', `${(fromCol - toCol) * unit}px`);
+  element.style.setProperty('--slide-y', `${(fromRow - toRow) * unit}px`);
+  element.classList.add('tile-slide');
+  element.addEventListener('animationend', () => element.classList.remove('tile-slide'), { once: true });
 }
 
-function unlockAutoplay() {
-  const value = redeemCodeInput.value.trim();
-
-  if (value !== AUTOPLAY_UNLOCK_CODE) {
-    redeemStatusElement.textContent = 'Invalid code. Please try again.';
-    return;
-  }
-
-  state.autoplayUnlocked = true;
-  saveAutoplayUnlocked();
-  redeemStatusElement.textContent = 'Unlocked successfully. Extra tools are now available.';
-  redeemCodeInput.value = '';
-  renderControls();
+function animateMerge(element) {
+  element.classList.add('tile-merge');
+  element.addEventListener('animationend', () => element.classList.remove('tile-merge'), { once: true });
 }
 
-function stopAutoPlay() {
-  state.autoPlaying = false;
-  state.lastAutoMove = null;
-
-  if (state.autoPlayTimer) {
-    window.clearTimeout(state.autoPlayTimer);
-    state.autoPlayTimer = null;
-  }
-
-  renderControls();
+function animatePop(element) {
+  element.classList.add('tile-pop');
+  element.addEventListener('animationend', () => element.classList.remove('tile-pop'), { once: true });
 }
 
+/* ── rendering ── */
 function renderScores() {
   scoreElement.textContent = String(state.score);
   bestScoreElement.textContent = String(state.bestScore);
 }
 
 function renderBoard() {
-  boardElement.innerHTML = '';
-
-  state.board.forEach((row, rowIndex) => {
-    row.forEach((value, columnIndex) => {
-      const cellElement = document.createElement('div');
-      cellElement.className = 'cell';
-      boardElement.appendChild(cellElement);
-
-      if (value === 0) {
-        return;
+  if (!firstRenderDone) {
+    boardElement.innerHTML = '';
+    for (let row = 0; row < state.size; row += 1) {
+      for (let col = 0; col < state.size; col += 1) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        boardElement.appendChild(cell);
       }
+    }
 
-      const tileElement = document.createElement('div');
-      tileElement.className = `tile tile-${value}`;
-      tileElement.style.gridRowStart = String(rowIndex + 1);
-      tileElement.style.gridColumnStart = String(columnIndex + 1);
-      tileElement.textContent = String(value);
-      boardElement.appendChild(tileElement);
-    });
-  });
+    for (const key of Object.keys(tileMeta)) {
+      const meta = tileMeta[key];
+      const [rs, cs] = key.split('-');
+      const row = Number(rs);
+      const col = Number(cs);
+
+      const tile = document.createElement('div');
+      tile.className = `tile tile-${meta.value}`;
+      tile.style.gridRowStart = String(row + 1);
+      tile.style.gridColumnStart = String(col + 1);
+      tile.textContent = String(meta.value);
+      tile.dataset.tileId = String(meta.id);
+      boardElement.appendChild(tile);
+      tileElements[meta.id] = tile;
+    }
+
+    firstRenderDone = true;
+    return;
+  }
+
+  const oldTileIds = new Set(Object.keys(tileElements).map(Number));
+  const newTileIds = new Set();
+
+  for (const key of Object.keys(tileMeta)) {
+    const meta = tileMeta[key];
+    const [rs, cs] = key.split('-');
+    const row = Number(rs);
+    const col = Number(cs);
+
+    newTileIds.add(meta.id);
+
+    let tile = tileElements[meta.id];
+    if (!tile) {
+      tile = document.createElement('div');
+      tile.dataset.tileId = String(meta.id);
+      boardElement.appendChild(tile);
+      tileElements[meta.id] = tile;
+    }
+
+    const oldRow = tile.style.gridRowStart ? Number(tile.style.gridRowStart) - 1 : null;
+    const oldCol = tile.style.gridColumnStart ? Number(tile.style.gridColumnStart) - 1 : null;
+
+    tile.className = `tile tile-${meta.value}`;
+    tile.style.gridRowStart = String(row + 1);
+    tile.style.gridColumnStart = String(col + 1);
+    tile.textContent = String(meta.value);
+
+    if (meta.isNew) {
+      tile.classList.remove('tile-slide', 'tile-merge');
+      animatePop(tile);
+    } else if (meta.isMerge) {
+      tile.classList.remove('tile-slide', 'tile-pop');
+      animateMerge(tile);
+    } else if (meta.movedFrom && oldRow !== null && oldCol !== null) {
+      tile.classList.remove('tile-pop', 'tile-merge');
+      animateSlide(tile, meta.movedFrom.row, meta.movedFrom.col, row, col);
+    } else if (oldRow !== null && oldCol !== null && (oldRow !== row || oldCol !== col)) {
+      tile.classList.remove('tile-pop', 'tile-merge');
+      animateSlide(tile, oldRow, oldCol, row, col);
+    } else {
+      tile.classList.remove('tile-slide', 'tile-merge', 'tile-pop');
+    }
+  }
+
+  for (const id of oldTileIds) {
+    if (!newTileIds.has(id)) {
+      const tile = tileElements[id];
+      if (tile) {
+        tile.style.transition = 'opacity 0.1s ease, transform 0.1s ease';
+        tile.style.opacity = '0';
+        tile.style.transform = 'scale(0.8)';
+        tile.addEventListener('transitionend', () => {
+          if (tile.parentNode) tile.parentNode.removeChild(tile);
+        }, { once: true });
+      }
+      delete tileElements[id];
+    }
+  }
+}
+
+function showSwipeHint(direction) {
+  if (!swipeHintElement) return;
+  swipeHintElement.textContent = SWIPE_HINT_ARROWS[direction] || '';
+  swipeHintElement.classList.add('show');
+  window.clearTimeout(swipeHintElement._timeout);
+  swipeHintElement._timeout = window.setTimeout(() => swipeHintElement.classList.remove('show'), 260);
 }
 
 function renderOverlay() {
   if (state.gameOver) {
     overlayElement.classList.remove('hidden');
     overlayTitleElement.textContent = 'Game Over';
-    overlayMessageElement.textContent = state.autoPlaying ? 'Autoplay stopped because there are no moves left.' : 'No more moves left. Give it another shot.';
+    overlayMessageElement.textContent = state.autoPlaying
+      ? 'Autoplay stopped because there are no moves left.'
+      : 'No more moves left. Give it another shot.';
     overlayButton.textContent = 'Play again';
     return;
   }
-
   if (state.won) {
     overlayElement.classList.remove('hidden');
     overlayTitleElement.textContent = 'You Win!';
@@ -493,7 +502,6 @@ function renderOverlay() {
     overlayButton.textContent = 'Keep going';
     return;
   }
-
   overlayElement.classList.add('hidden');
 }
 
@@ -503,23 +511,18 @@ function renderControls() {
   autoplayButton.setAttribute('aria-pressed', String(state.autoPlaying));
   autoplaySpeedSelect.disabled = state.autoPlaying;
 
-  if (state.gameOver) {
-    autoplayStatusElement.textContent = 'Game over';
-    return;
-  }
+  if (state.gameOver) { autoplayStatusElement.textContent = 'Game over'; return; }
 
   if (state.autoPlaying) {
-    const label = state.lastAutoMove ? `Auto playing · ${DIRECTION_LABELS[state.lastAutoMove]}` : 'Auto playing · Thinking';
-    autoplayStatusElement.textContent = label;
+    autoplayStatusElement.textContent = state.lastAutoMove
+      ? `Auto playing · ${DIRECTION_LABELS[state.lastAutoMove]}`
+      : 'Auto playing · Thinking';
     return;
   }
 
-  if (state.autoplayUnlocked) {
-    autoplayStatusElement.textContent = 'Extra tools unlocked';
-    return;
-  }
-
-  autoplayStatusElement.textContent = 'Manual play';
+  autoplayStatusElement.textContent = state.autoplayUnlocked
+    ? 'Extra tools unlocked'
+    : 'Manual play';
 }
 
 function render() {
@@ -529,33 +532,53 @@ function render() {
   renderControls();
 }
 
+/* ── settings modal ── */
+function openSettings() {
+  state.settingsOpen = true;
+  settingsModal.classList.add('is-open');
+  settingsModal.setAttribute('aria-hidden', 'false');
+  redeemCodeInput.focus();
+}
+
+function closeSettings() {
+  state.settingsOpen = false;
+  settingsModal.classList.remove('is-open');
+  settingsModal.setAttribute('aria-hidden', 'true');
+}
+
+function unlockAutoplay() {
+  const value = redeemCodeInput.value.trim();
+  if (value !== AUTOPLAY_UNLOCK_CODE) {
+    redeemStatusElement.textContent = 'Invalid code. Please try again.';
+    return;
+  }
+  state.autoplayUnlocked = true;
+  saveAutoplayUnlocked();
+  redeemStatusElement.textContent = 'Unlocked successfully. Extra tools are now available.';
+  redeemCodeInput.value = '';
+  renderControls();
+}
+
+/* ── autoplay ── */
+function stopAutoPlay() {
+  state.autoPlaying = false;
+  state.lastAutoMove = null;
+  if (state.autoPlayTimer) { window.clearTimeout(state.autoPlayTimer); state.autoPlayTimer = null; }
+  renderControls();
+}
+
 function scheduleAutoPlayTick() {
-  if (!state.autoPlaying) {
-    return;
-  }
+  if (!state.autoPlaying) return;
+  if (state.gameOver) { stopAutoPlay(); render(); return; }
 
-  if (state.gameOver) {
-    stopAutoPlay();
-    render();
-    return;
-  }
+  const best = getBestMove(state.board);
+  if (!best) { stopAutoPlay(); render(); return; }
 
-  const bestDirection = getBestMove(state.board);
-
-  if (!bestDirection) {
-    stopAutoPlay();
-    render();
-    return;
-  }
-
-  state.lastAutoMove = bestDirection;
-  applyMove(bestDirection);
+  state.lastAutoMove = best;
+  applyMove(best);
 
   if (!state.autoPlaying || state.gameOver) {
-    if (state.gameOver) {
-      stopAutoPlay();
-      render();
-    }
+    if (state.gameOver) { stopAutoPlay(); render(); }
     return;
   }
 
@@ -563,167 +586,154 @@ function scheduleAutoPlayTick() {
 }
 
 function startAutoPlay() {
-  if (!state.autoplayUnlocked || state.autoPlaying || state.gameOver) {
-    renderControls();
-    return;
-  }
-
+  if (!state.autoplayUnlocked || state.autoPlaying || state.gameOver) { renderControls(); return; }
   state.autoPlaying = true;
   state.lastAutoMove = null;
   renderControls();
   scheduleAutoPlayTick();
 }
 
+/* ── game flow ── */
 function startGame() {
   state.board = createEmptyBoard();
   state.score = 0;
   state.gameOver = false;
   state.won = false;
   state.lastAutoMove = null;
-  addRandomTile(state.board);
-  addRandomTile(state.board);
+
+  nextTileId = 1;
+  Object.keys(tileMeta).forEach((k) => delete tileMeta[k]);
+  Object.keys(tileElements).forEach((id) => {
+    const el = tileElements[id];
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+    delete tileElements[id];
+  });
+  firstRenderDone = false;
+
+  const a = addRandomTile(state.board);
+  const b = addRandomTile(state.board);
+  if (a) tileMeta[getTileKey(a.row, a.column)] = { id: nextTileId, value: state.board[a.row][a.column], isNew: true };
+  nextTileId += 1;
+  if (b) tileMeta[getTileKey(b.row, b.column)] = { id: nextTileId, value: state.board[b.row][b.column], isNew: true };
+  nextTileId += 1;
+
   render();
 
   if (state.autoPlaying) {
-    if (state.autoPlayTimer) {
-      window.clearTimeout(state.autoPlayTimer);
-      state.autoPlayTimer = null;
-    }
-
+    if (state.autoPlayTimer) { window.clearTimeout(state.autoPlayTimer); state.autoPlayTimer = null; }
     scheduleAutoPlayTick();
   }
 }
 
 function applyMove(direction) {
-  if (state.gameOver) {
-    return false;
-  }
+  if (state.gameOver) return false;
 
+  const oldBoard = cloneBoard(state.board);
   const result = simulateMove(state.board, direction);
+  if (!result.changed || boardsEqual(result.board, state.board)) return false;
 
-  if (!result.changed || boardsEqual(result.board, state.board)) {
-    return false;
-  }
-
-  state.board = result.board;
+  const movedBoard = result.board;
+  state.board = movedBoard;
   state.score += result.score;
   updateBestScore();
-  addRandomTile(state.board);
 
-  if (!state.won && has2048(state.board)) {
-    state.won = true;
-  }
+  const spawn = addRandomTile(state.board);
+  buildTileMeta(state.board, oldBoard, spawn);
 
-  if (isGameOver(state.board)) {
-    state.gameOver = true;
-  }
+  if (!state.won && has2048(state.board)) state.won = true;
+  if (isGameOver(state.board)) state.gameOver = true;
 
   render();
   return true;
 }
 
+/* ── input ── */
 function handleManualMove(direction) {
-  if (!DIRECTIONS.includes(direction) || state.settingsOpen) {
-    return;
+  if (!DIRECTIONS.includes(direction) || state.settingsOpen) return;
+  if (state.autoPlaying) stopAutoPlay();
+  const ok = applyMove(direction);
+  if (ok) {
+    showSwipeHint(direction);
+    if (window.navigator.vibrate) window.navigator.vibrate(12);
   }
-
-  if (state.autoPlaying) {
-    stopAutoPlay();
-  }
-
-  applyMove(direction);
 }
 
 function handleTouchStart(event) {
-  if (state.settingsOpen) {
-    return;
-  }
-
+  if (state.settingsOpen) return;
   const touch = event.changedTouches[0];
   state.touchStartX = touch.clientX;
   state.touchStartY = touch.clientY;
 }
 
 function handleTouchEnd(event) {
-  if (state.settingsOpen || state.touchStartX === null || state.touchStartY === null) {
+  if (state.settingsOpen || state.touchStartX === null || state.touchStartY === null) return;
+
+  const now = Date.now();
+  if (now - state.lastSwipeTime < SWIPE_COOLDOWN) {
+    state.touchStartX = null;
+    state.touchStartY = null;
     return;
   }
 
   const touch = event.changedTouches[0];
-  const deltaX = touch.clientX - state.touchStartX;
-  const deltaY = touch.clientY - state.touchStartY;
+  const dx = touch.clientX - state.touchStartX;
+  const dy = touch.clientY - state.touchStartY;
   state.touchStartX = null;
   state.touchStartY = null;
 
-  if (Math.abs(deltaX) < SWIPE_THRESHOLD && Math.abs(deltaY) < SWIPE_THRESHOLD) {
-    return;
-  }
+  if (Math.abs(dx) < SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_THRESHOLD) return;
 
-  if (Math.abs(deltaX) > Math.abs(deltaY)) {
-    handleManualMove(deltaX > 0 ? 'ArrowRight' : 'ArrowLeft');
-    return;
-  }
+  state.lastSwipeTime = now;
 
-  handleManualMove(deltaY > 0 ? 'ArrowDown' : 'ArrowUp');
+  if (Math.abs(dx) > Math.abs(dy)) {
+    handleManualMove(dx > 0 ? 'ArrowRight' : 'ArrowLeft');
+  } else {
+    handleManualMove(dy > 0 ? 'ArrowDown' : 'ArrowUp');
+  }
 }
 
 function handleKeydown(event) {
-  if (event.key === 'Escape' && state.settingsOpen) {
-    closeSettings();
-    return;
-  }
-
-  if (!DIRECTIONS.includes(event.key)) {
-    return;
-  }
-
+  if (event.key === 'Escape' && state.settingsOpen) { closeSettings(); return; }
+  if (!DIRECTIONS.includes(event.key)) return;
   event.preventDefault();
   handleManualMove(event.key);
 }
 
+/* ── event bindings ── */
 restartButton.addEventListener('click', startGame);
 settingsButton.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
 settingsModal.addEventListener('click', (event) => {
-  if (event.target.dataset.closeSettings === 'true') {
-    closeSettings();
-  }
+  if (event.target.dataset.closeSettings === 'true') closeSettings();
 });
 redeemCodeButton.addEventListener('click', unlockAutoplay);
 redeemCodeInput.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    unlockAutoplay();
-  }
+  if (event.key === 'Enter') unlockAutoplay();
 });
 autoplayButton.addEventListener('click', () => {
-  if (state.autoPlaying) {
-    stopAutoPlay();
-    return;
-  }
-
+  if (state.autoPlaying) { stopAutoPlay(); return; }
   startAutoPlay();
 });
 autoplaySpeedSelect.addEventListener('change', (event) => {
   state.autoPlayDelay = Number(event.target.value);
 });
 overlayButton.addEventListener('click', () => {
-  if (state.gameOver) {
-    startGame();
-    return;
-  }
-
-  if (state.won) {
-    state.won = false;
-    renderOverlay();
-    renderControls();
-  }
+  if (state.gameOver) { startGame(); return; }
+  if (state.won) { state.won = false; renderOverlay(); renderControls(); }
 });
 boardElement.addEventListener('touchstart', handleTouchStart, { passive: true });
 boardElement.addEventListener('touchend', handleTouchEnd, { passive: true });
 window.addEventListener('keydown', handleKeydown);
 
+/* ── init ── */
+if (IS_TOUCH_DEVICE && instructionsElement) {
+  instructionsElement.textContent = 'Swipe to move the tiles.';
+}
+
 state.bestScore = loadBestScore();
 startGame();
+
+/* ── debug ── */
 window.__2048Debug = {
   state,
   getBestMove: () => getBestMove(state.board),
