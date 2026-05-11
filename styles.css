@@ -35,7 +35,7 @@ select {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 32px 16px;
+  padding: 24px 14px;
 }
 
 .game-shell {
@@ -195,6 +195,7 @@ h1 {
   border-radius: 24px;
   background: var(--board);
   margin-inline: auto;
+  touch-action: none;
 }
 
 .cell,
@@ -349,27 +350,46 @@ h1 {
 
 @media (max-width: 560px) {
   :root {
-    --gap: 10px;
-    --board-size: min(92vw, 380px);
+    --gap: 8px;
+    --board-size: min(calc(100vw - 44px), 380px);
+  }
+
+  .app {
+    place-items: start center;
+    padding: 12px 10px 20px;
   }
 
   .game-shell {
-    padding: 22px 18px;
-    border-radius: 22px;
+    padding: 14px 12px 16px;
+    border-radius: 20px;
   }
 
   .topbar {
     flex-direction: column;
     align-items: stretch;
+    gap: 10px;
+  }
+
+  h1 {
+    font-size: clamp(2.6rem, 12vw, 3.5rem);
+  }
+
+  .subtitle,
+  .instructions,
+  .status-text,
+  .score-label {
+    font-size: 0.86rem;
   }
 
   .controls {
     min-width: 0;
     align-items: stretch;
+    gap: 8px;
   }
 
   .button-group {
-    flex-direction: column;
+    flex-direction: row;
+    gap: 8px;
   }
 
   .autoplay-panel {
@@ -378,6 +398,34 @@ h1 {
 
   .button {
     width: 100%;
+    padding: 10px 14px;
+  }
+
+  .scoreboard {
+    margin: 14px 0 10px;
+    gap: 10px;
+  }
+
+  .score-card {
+    padding: 12px;
+    border-radius: 16px;
+  }
+
+  .score-card strong {
+    font-size: 1.4rem;
+  }
+
+  .board-wrapper {
+    margin-top: 12px;
+  }
+
+  .board {
+    border-radius: 18px;
+  }
+
+  .tile,
+  .cell {
+    border-radius: 12px;
   }
 
   .speed-control {
@@ -392,7 +440,12 @@ h1 {
     flex-direction: column;
   }
 
-  .score-card strong {
-    font-size: 1.7rem;
+  .modal {
+    padding: 12px;
+  }
+
+  .modal-card {
+    padding: 18px;
+    border-radius: 18px;
   }
 }

@@ -28,6 +28,7 @@ const DIRECTION_LABELS = {
   ArrowDown: 'Down',
   ArrowLeft: 'Left',
 };
+const SWIPE_THRESHOLD = 28;
 
 const state = {
   size: GRID_SIZE,
@@ -42,6 +43,8 @@ const state = {
   lastAutoMove: null,
   autoplayUnlocked: window.localStorage.getItem(AUTOPLAY_UNLOCK_KEY) === 'true',
   settingsOpen: false,
+  touchStartX: null,
+  touchStartY: null,
 };
 
 function createEmptyBoard() {
@@ -619,6 +622,51 @@ function applyMove(direction) {
   return true;
 }
 
+function handleManualMove(direction) {
+  if (!DIRECTIONS.includes(direction) || state.settingsOpen) {
+    return;
+  }
+
+  if (state.autoPlaying) {
+    stopAutoPlay();
+  }
+
+  applyMove(direction);
+}
+
+function handleTouchStart(event) {
+  if (state.settingsOpen) {
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  state.touchStartX = touch.clientX;
+  state.touchStartY = touch.clientY;
+}
+
+function handleTouchEnd(event) {
+  if (state.settingsOpen || state.touchStartX === null || state.touchStartY === null) {
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  const deltaX = touch.clientX - state.touchStartX;
+  const deltaY = touch.clientY - state.touchStartY;
+  state.touchStartX = null;
+  state.touchStartY = null;
+
+  if (Math.abs(deltaX) < SWIPE_THRESHOLD && Math.abs(deltaY) < SWIPE_THRESHOLD) {
+    return;
+  }
+
+  if (Math.abs(deltaX) > Math.abs(deltaY)) {
+    handleManualMove(deltaX > 0 ? 'ArrowRight' : 'ArrowLeft');
+    return;
+  }
+
+  handleManualMove(deltaY > 0 ? 'ArrowDown' : 'ArrowUp');
+}
+
 function handleKeydown(event) {
   if (event.key === 'Escape' && state.settingsOpen) {
     closeSettings();
@@ -630,12 +678,7 @@ function handleKeydown(event) {
   }
 
   event.preventDefault();
-
-  if (state.autoPlaying) {
-    stopAutoPlay();
-  }
-
-  applyMove(event.key);
+  handleManualMove(event.key);
 }
 
 restartButton.addEventListener('click', startGame);
@@ -675,6 +718,8 @@ overlayButton.addEventListener('click', () => {
     renderControls();
   }
 });
+boardElement.addEventListener('touchstart', handleTouchStart, { passive: true });
+boardElement.addEventListener('touchend', handleTouchEnd, { passive: true });
 window.addEventListener('keydown', handleKeydown);
 
 state.bestScore = loadBestScore();
@@ -688,6 +733,9 @@ window.__2048Debug = {
   startAutoPlay,
   stopAutoPlay,
   startGame,
+  handleManualMove,
+  handleTouchStart,
+  handleTouchEnd,
   unlockAutoplay: () => {
     state.autoplayUnlocked = true;
     saveAutoplayUnlocked();
