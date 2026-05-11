@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>2048</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="game-shell">
+        <header class="topbar">
+          <div>
+            <h1>2048</h1>
+            <p class="subtitle">Join the tiles and reach 2048.</p>
+          </div>
+          <div class="controls">
+            <div class="button-group">
+              <button id="restart-button" class="button" type="button">Restart</button>
+              <button id="autoplay-button" class="button button-secondary" type="button">Auto Play</button>
+            </div>
+            <label class="speed-control" for="autoplay-speed">
+              <span>Speed</span>
+              <select id="autoplay-speed">
+                <option value="220">Slow</option>
+                <option value="120" selected>Normal</option>
+                <option value="50">Fast</option>
+              </select>
+            </label>
+            <p id="autoplay-status" class="status-text">Manual play</p>
+          </div>
+        </header>
+
+        <section class="scoreboard" aria-label="Scoreboard">
+          <div class="score-card">
+            <span class="score-label">Score</span>
+            <strong id="score">0</strong>
+          </div>
+          <div class="score-card">
+            <span class="score-label">Best</span>
+            <strong id="best-score">0</strong>
+          </div>
+        </section>
+
+        <p class="instructions">Use your arrow keys to move the tiles.</p>
+
+        <section class="board-wrapper">
+          <div id="game-board" class="board" aria-label="2048 game board"></div>
+          <div id="game-overlay" class="overlay hidden" aria-live="polite">
+            <div class="overlay-card">
+              <h2 id="overlay-title"></h2>
+              <p id="overlay-message"></p>
+              <button id="overlay-button" class="button" type="button">Try again</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
