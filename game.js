@@ -329,17 +329,29 @@ function animatePop(element) {
   element.addEventListener('animationend', () => element.classList.remove('tile-pop'), { once: true });
 }
 
-function detectMerges(newBoard, oldBoard) {
-  /* A merge happened at position (r,c) if:
-     - newBoard[r][c] is double some adjacent oldBoard cell
-     - oldBoard[r][c] is different (tile didn't just stay) */
+function getMovedScore(newBoard, oldBoard) {
+  let newSum = 0;
+  let oldSum = 0;
+  for (let row = 0; row < state.size; row += 1) {
+    for (let col = 0; col < state.size; col += 1) {
+      newSum += newBoard[row][col];
+      oldSum += oldBoard[row][col];
+    }
+  }
+  return Math.max(0, newSum - oldSum);
+}
+
+function detectMerges(newBoard, oldBoard, movedScore) {
+  /* Only mark as merged if we know a merge happened (score gained) and
+     the position's value is double of some adjacent old value.
+     If movedScore is 0, there were no merges at all. */
+  if (movedScore <= 0) return new Set();
+
   const merged = new Set();
   for (let row = 0; row < state.size; row += 1) {
     for (let col = 0; col < state.size; col += 1) {
       const nv = newBoard[row][col];
-      if (nv === 0) continue;
-      const ov = oldBoard[row][col];
-      if (ov === nv) continue;
+      if (nv === 0 || oldBoard[row][col] === nv) continue;
       for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
         const or = row + dr;
         const oc = col + dc;
@@ -353,6 +365,21 @@ function detectMerges(newBoard, oldBoard) {
     }
   }
   return merged;
+}
+
+function detectNewPositions(newBoard, oldBoard, merged) {
+  const newSet = new Set();
+  for (let row = 0; row < state.size; row += 1) {
+    for (let col = 0; col < state.size; col += 1) {
+      const nv = newBoard[row][col];
+      const ov = oldBoard[row][col];
+      if (nv > 0 && ov === 0 && !merged.has(posKey(row, col))) {
+        newSet.add(posKey(row, col));
+      }
+    }
+  }
+  window._debugNewPos = { newSet: [...newSet], merged: [...merged] };
+  return newSet;
 }
 
 function findSource(row, col, value, prevTiles, merged, claimedOld) {
@@ -442,7 +469,9 @@ function renderBoard() {
   const oldTiles = { ...tileMap };
   Object.keys(tileMap).forEach((k) => delete tileMap[k]);
 
-  const merged = detectMerges(state.board, prevBoard || []);
+  const movedScore = prevBoard ? getMovedScore(state.board, prevBoard) : 0;
+  const merged = detectMerges(state.board, prevBoard || [], movedScore);
+  const newPositions = detectNewPositions(state.board, prevBoard || [], merged);
   const claimedOld = new Set();
 
   for (let row = 0; row < state.size; row += 1) {
@@ -450,6 +479,19 @@ function renderBoard() {
       const value = state.board[row][col];
       if (value === 0) continue;
       const key = posKey(row, col);
+
+      /* New tiles: create fresh element with pop animation, never reuse. */
+      if (newPositions.has(key)) {
+        const tile = document.createElement('div');
+        tileMap[key] = tile;
+        tile.className = 'tile tile-' + value;
+        tile.style.gridRowStart = String(row + 1);
+        tile.style.gridColumnStart = String(col + 1);
+        tile.textContent = String(value);
+        boardElement.appendChild(tile);
+        animatePop(tile);
+        continue;
+      }
 
       const src = findSource(row, col, value, oldTiles, merged, claimedOld);
       let tile = src ? oldTiles[src] : null;
