@@ -183,32 +183,28 @@ function evaluateBoard(board) {
   const emptyCount = flat.filter((v) => v === 0).length;
   const logMax = Math.log2(maxTile || 1);
 
-  /* 1. Monotonicity: strongest factor.
-     For each direction, compute how well values decrease.
-     Take the maximum across all 4 directions and 2 axes. */
+  /* 1. Multi-directional monotonicity: pick the best direction/axis. */
   const monoScores = [];
-  /* left-to-right monotonicity per row */
   for (const row of board) {
     let left = 0;
     for (let i = 0; i < row.length - 1; i += 1) {
-      left += row[i] >= row[i + 1] ? Math.log2((row[i] || 1) + 1) : -Math.log2((row[i + 1] || 1) + 1);
+      left += row[i] >= row[i + 1] ? row[i] - row[i + 1] : -(row[i + 1] - row[i]);
     }
     monoScores.push(left);
   }
-  /* top-to-bottom monotonicity per column */
   for (let c = 0; c < state.size; c += 1) {
     let down = 0;
     for (let r = 0; r < state.size - 1; r += 1) {
-      down += board[r][c] >= board[r + 1][c] ? Math.log2((board[r][c] || 1) + 1) : -Math.log2((board[r + 1][c] || 1) + 1);
+      down += board[r][c] >= board[r + 1][c] ? board[r][c] - board[r + 1][c] : -(board[r + 1][c] - board[r][c]);
     }
     monoScores.push(down);
   }
   const bestMono = Math.max(...monoScores);
 
-  /* 2. Empty cells. */
-  const emptyBonus = emptyCount * emptyCount * 80;
+  /* 2. Empty cells (quadratic bonus). */
+  const emptyBonus = emptyCount * emptyCount;
 
-  /* 3. Smoothness: penalize big jumps between neighbors. */
+  /* 3. Smoothness penalty. */
   let smoothPenalty = 0;
   for (let r = 0; r < state.size; r += 1) {
     for (let c = 0; c < state.size; c += 1) {
@@ -224,7 +220,7 @@ function evaluateBoard(board) {
     }
   }
 
-  /* 4. Merge potential: count adjacent equal tiles. */
+  /* 4. Merge potential. */
   let merges = 0;
   for (let r = 0; r < state.size; r += 1) {
     for (let c = 0; c < state.size; c += 1) {
@@ -234,62 +230,58 @@ function evaluateBoard(board) {
     }
   }
 
-  /* 5. Corner bonus: reward max tile in a corner. */
+  /* 5. Corner bonus. */
   const corners = [board[0][0], board[0][state.size - 1], board[state.size - 1][0], board[state.size - 1][state.size - 1]];
-  const cornerBonus = corners.includes(maxTile) ? maxTile * 2 : -maxTile * 0.3;
+  const cornerBonus = corners.includes(maxTile) ? maxTile : 0;
 
   return (
-    bestMono * 4.2 +
-    emptyBonus +
-    smoothPenalty * -2.8 +
-    merges * 65 +
-    cornerBonus +
-    logMax * 35
+    bestMono * 0.4 +
+    emptyBonus * 55 +
+    smoothPenalty * -3.0 +
+    merges * 28 +
+    cornerBonus * 0.6 +
+    logMax * 22
   );
 }
 
 function getSearchDepth(board) {
   const n = getEmptyCells(board).length;
   if (n >= 9) return 3;
-  if (n >= 7) return 4;
+  if (n >= 6) return 4;
   if (n >= 4) return 5;
   return 6;
 }
 
-function expectimax(board, depth, isChance, alpha, beta) {
+function expectimax(board, depth, isChance) {
   if (depth === 0 || isGameOver(board)) return evaluateBoard(board);
 
   if (!isChance) {
-    /* Player node: try moves in descending score order for better pruning. */
-    const moves = [];
+    /* Player node: pick best direction. */
+    let best = Number.NEGATIVE_INFINITY;
+    let found = false;
     for (const dir of DIRECTIONS) {
       const r = simulateMove(board, dir);
-      if (r.changed) moves.push(r);
+      if (!r.changed) continue;
+      found = true;
+      const score = r.score * 4 + expectimax(r.board, depth - 1, true);
+      if (score > best) best = score;
     }
-    moves.sort((a, b) => b.score - a.score);
-
-    if (moves.length === 0) return evaluateBoard(board);
-
-    for (const r of moves) {
-      const score = r.score * 8 + expectimax(r.board, depth - 1, true, alpha, beta);
-      if (score > alpha) alpha = score;
-      if (alpha >= beta) break;
-    }
-    return alpha;
+    return found ? best : evaluateBoard(board);
   }
 
+  /* Chance node: average over all possible spawns. */
   const cells = getEmptyCells(board);
-  if (cells.length === 0) return expectimax(board, depth - 1, false, alpha, beta);
+  if (cells.length === 0) return expectimax(board, depth - 1, false);
 
   let expected = 0;
   const p = 1 / cells.length;
   for (const cell of cells) {
     const b2 = cloneBoard(board);
     b2[cell.row][cell.column] = 2;
-    expected += p * 0.9 * expectimax(b2, depth - 1, false, alpha, beta);
+    expected += p * 0.9 * expectimax(b2, depth - 1, false);
     const b4 = cloneBoard(board);
     b4[cell.row][cell.column] = 4;
-    expected += p * 0.1 * expectimax(b4, depth - 1, false, alpha, beta);
+    expected += p * 0.1 * expectimax(b4, depth - 1, false);
   }
   return expected;
 }
@@ -299,12 +291,10 @@ function getBestMove(board) {
   let bestDir = null;
   let bestScore = Number.NEGATIVE_INFINITY;
 
-  /* Evaluate each direction and pick the best. */
   for (const dir of DIRECTIONS) {
     const r = simulateMove(board, dir);
     if (!r.changed) continue;
-    /* Immediate merge score is important at top level. */
-    const score = r.score * 12 + expectimax(r.board, depth, true, bestScore, Number.POSITIVE_INFINITY);
+    const score = r.score * 4 + expectimax(r.board, depth, true);
     if (score > bestScore) { bestScore = score; bestDir = dir; }
   }
   return bestDir;
