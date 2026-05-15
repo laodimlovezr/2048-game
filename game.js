@@ -238,34 +238,40 @@ function getSearchDepth(board) {
   return 5;
 }
 
-function expectimax(board, depth, isChance) {
+function expectimax(board, depth, isChance, alpha, beta) {
   if (depth === 0 || isGameOver(board)) return evaluateBoard(board);
 
   if (!isChance) {
-    let best = Number.NEGATIVE_INFINITY;
-    let found = false;
+    /* Player node: try moves in descending score order for better pruning. */
+    const moves = [];
     for (const dir of DIRECTIONS) {
       const r = simulateMove(board, dir);
-      if (!r.changed) continue;
-      found = true;
-      const score = r.score * 8 + expectimax(r.board, depth - 1, true);
-      if (score > best) best = score;
+      if (r.changed) moves.push(r);
     }
-    return found ? best : evaluateBoard(board);
+    moves.sort((a, b) => b.score - a.score);
+
+    if (moves.length === 0) return evaluateBoard(board);
+
+    for (const r of moves) {
+      const score = r.score * 8 + expectimax(r.board, depth - 1, true, alpha, beta);
+      if (score > alpha) alpha = score;
+      if (alpha >= beta) break;
+    }
+    return alpha;
   }
 
   const cells = getEmptyCells(board);
-  if (cells.length === 0) return expectimax(board, depth - 1, false);
+  if (cells.length === 0) return expectimax(board, depth - 1, false, alpha, beta);
 
   let expected = 0;
   const p = 1 / cells.length;
   for (const cell of cells) {
     const b2 = cloneBoard(board);
     b2[cell.row][cell.column] = 2;
-    expected += p * 0.9 * expectimax(b2, depth - 1, false);
+    expected += p * 0.9 * expectimax(b2, depth - 1, false, alpha, beta);
     const b4 = cloneBoard(board);
     b4[cell.row][cell.column] = 4;
-    expected += p * 0.1 * expectimax(b4, depth - 1, false);
+    expected += p * 0.1 * expectimax(b4, depth - 1, false, alpha, beta);
   }
   return expected;
 }
@@ -274,10 +280,11 @@ function getBestMove(board) {
   const depth = getSearchDepth(board);
   let bestDir = null;
   let bestScore = Number.NEGATIVE_INFINITY;
+
   for (const dir of DIRECTIONS) {
     const r = simulateMove(board, dir);
     if (!r.changed) continue;
-    const score = r.score * 10 + expectimax(r.board, depth, true);
+    const score = r.score * 10 + expectimax(r.board, depth, true, bestScore, Number.POSITIVE_INFINITY);
     if (score > bestScore) { bestScore = score; bestDir = dir; }
   }
   return bestDir;
