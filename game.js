@@ -176,66 +176,84 @@ function isGameOver(board) {
   return !hasEmptyCell(board) && !canMerge(board);
 }
 
-/* ── AI ── */
-function countPossibleMerges(board) {
-  let n = 0;
-  for (let row = 0; row < state.size; row += 1) {
-    for (let col = 0; col < state.size; col += 1) {
-      if (board[row][col] === 0) continue;
-      if (board[row][col + 1] === board[row][col]) n += 1;
-      if ((board[row + 1] || [])[col] === board[row][col]) n += 1;
-    }
-  }
-  return n;
-}
-
-function calculateMonotonicity(board) {
-  let total = 0;
-  for (const row of board) {
-    for (let i = 0; i < row.length - 1; i += 1) total += row[i] >= row[i + 1] ? 1 : -1;
-  }
-  const t = transpose(board);
-  for (const col of t) {
-    for (let i = 0; i < col.length - 1; i += 1) total += col[i] >= col[i + 1] ? 1 : -1;
-  }
-  return total;
-}
-
-function calculateSmoothness(board) {
-  let penalty = 0;
-  for (let row = 0; row < state.size; row += 1) {
-    for (let col = 0; col < state.size; col += 1) {
-      if (board[row][col] === 0) continue;
-      const cl = Math.log2(board[row][col]);
-      if (board[row][col + 1]) penalty += Math.abs(cl - Math.log2(board[row][col + 1]));
-      if ((board[row + 1] || [])[col]) penalty += Math.abs(cl - Math.log2((board[row + 1] || [])[col]));
-    }
-  }
-  return -penalty;
-}
-
-function calculateCornerScore(board) {
-  const maxTile = Math.max(...board.flat());
-  const corners = [board[0][0], board[0][state.size - 1], board[state.size - 1][0], board[state.size - 1][state.size - 1]];
-  return corners.includes(maxTile) ? maxTile : -maxTile * 0.5;
-}
-
+/* ── Evaluation ── */
 function evaluateBoard(board) {
+  const flat = board.flat();
+  const maxTile = Math.max(...flat);
+  const emptyCount = flat.filter((v) => v === 0).length;
+  const logMax = Math.log2(maxTile || 1);
+
+  /* 1. Monotonicity: strongest factor.
+     For each direction, compute how well values decrease.
+     Take the maximum across all 4 directions and 2 axes. */
+  const monoScores = [];
+  /* left-to-right monotonicity per row */
+  for (const row of board) {
+    let left = 0;
+    for (let i = 0; i < row.length - 1; i += 1) {
+      left += row[i] >= row[i + 1] ? Math.log2((row[i] || 1) + 1) : -Math.log2((row[i + 1] || 1) + 1);
+    }
+    monoScores.push(left);
+  }
+  /* top-to-bottom monotonicity per column */
+  for (let c = 0; c < state.size; c += 1) {
+    let down = 0;
+    for (let r = 0; r < state.size - 1; r += 1) {
+      down += board[r][c] >= board[r + 1][c] ? Math.log2((board[r][c] || 1) + 1) : -Math.log2((board[r + 1][c] || 1) + 1);
+    }
+    monoScores.push(down);
+  }
+  const bestMono = Math.max(...monoScores);
+
+  /* 2. Empty cells. */
+  const emptyBonus = emptyCount * emptyCount * 80;
+
+  /* 3. Smoothness: penalize big jumps between neighbors. */
+  let smoothPenalty = 0;
+  for (let r = 0; r < state.size; r += 1) {
+    for (let c = 0; c < state.size; c += 1) {
+      const v = board[r][c];
+      if (v === 0) continue;
+      const lv = Math.log2(v);
+      if (c + 1 < state.size && board[r][c + 1] > 0) {
+        smoothPenalty += Math.abs(lv - Math.log2(board[r][c + 1]));
+      }
+      if (r + 1 < state.size && board[r + 1][c] > 0) {
+        smoothPenalty += Math.abs(lv - Math.log2(board[r + 1][c]));
+      }
+    }
+  }
+
+  /* 4. Merge potential: count adjacent equal tiles. */
+  let merges = 0;
+  for (let r = 0; r < state.size; r += 1) {
+    for (let c = 0; c < state.size; c += 1) {
+      if (board[r][c] === 0) continue;
+      if (c + 1 < state.size && board[r][c + 1] === board[r][c]) merges += 1;
+      if (r + 1 < state.size && board[r + 1][c] === board[r][c]) merges += 1;
+    }
+  }
+
+  /* 5. Corner bonus: reward max tile in a corner. */
+  const corners = [board[0][0], board[0][state.size - 1], board[state.size - 1][0], board[state.size - 1][state.size - 1]];
+  const cornerBonus = corners.includes(maxTile) ? maxTile * 2 : -maxTile * 0.3;
+
   return (
-    getEmptyCells(board).length * 280 +
-    countPossibleMerges(board) * 110 +
-    calculateMonotonicity(board) * 16 +
-    calculateSmoothness(board) * 22 +
-    calculateCornerScore(board) * 2.4 +
-    Math.log2(Math.max(...board.flat()) || 1) * 90
+    bestMono * 4.2 +
+    emptyBonus +
+    smoothPenalty * -2.8 +
+    merges * 65 +
+    cornerBonus +
+    logMax * 35
   );
 }
 
 function getSearchDepth(board) {
   const n = getEmptyCells(board).length;
-  if (n >= 8) return 3;
-  if (n >= 5) return 4;
-  return 5;
+  if (n >= 9) return 3;
+  if (n >= 7) return 4;
+  if (n >= 4) return 5;
+  return 6;
 }
 
 function expectimax(board, depth, isChance, alpha, beta) {
@@ -281,10 +299,12 @@ function getBestMove(board) {
   let bestDir = null;
   let bestScore = Number.NEGATIVE_INFINITY;
 
+  /* Evaluate each direction and pick the best. */
   for (const dir of DIRECTIONS) {
     const r = simulateMove(board, dir);
     if (!r.changed) continue;
-    const score = r.score * 10 + expectimax(r.board, depth, true, bestScore, Number.POSITIVE_INFINITY);
+    /* Immediate merge score is important at top level. */
+    const score = r.score * 12 + expectimax(r.board, depth, true, bestScore, Number.POSITIVE_INFINITY);
     if (score > bestScore) { bestScore = score; bestDir = dir; }
   }
   return bestDir;
