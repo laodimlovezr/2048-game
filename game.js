@@ -471,7 +471,20 @@ function detectNewPositions(newBoard, oldBoard, merged) {
 
 function findSource(row, col, value, prevTiles, merged, claimedOld) {
   const key = posKey(row, col);
-  if (merged.has(key)) return null;
+  if (merged.has(key)) {
+    /* For merged tiles, find source with half the value (e.g., two 2s merge to 4). */
+    const halfValue = value / 2;
+    let bestPk = null;
+    let bestDist = Infinity;
+    for (const pk of Object.keys(prevTiles)) {
+      if (claimedOld.has(pk)) continue;
+      if (prevTiles[pk].textContent !== String(halfValue)) continue;
+      const [pr, pc] = pk.split(',').map(Number);
+      const dist = Math.abs(pr - row) + Math.abs(pc - col);
+      if (dist < bestDist) { bestDist = dist; bestPk = pk; }
+    }
+    return bestPk;
+  }
 
   /* Same position: reuse if tile is available and matches value. */
   if (prevTiles[key] && prevTiles[key].textContent === String(value) && !claimedOld.has(key)) return key;
