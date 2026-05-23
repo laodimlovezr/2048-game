@@ -247,15 +247,15 @@ h1 {
 }
 
 .tile-pop {
-  animation: pop 0.18s ease;
+  animation: pop 0.15s ease-out;
 }
 
 .tile-merge {
-  animation: merge-bounce 0.22s ease;
+  animation: merge-bounce 0.2s ease-out;
 }
 
 .tile-slide {
-  animation: slide-in 0.18s ease;
+  animation: slide-in 0.12s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .tile-2 { background: #eee4da; color: #776e65; }
@@ -521,11 +521,14 @@ h1 {
 }
 
 @keyframes pop {
-  from {
+  0% {
     transform: scale(0);
     opacity: 0;
   }
-  to {
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
     transform: scale(1);
     opacity: 1;
   }
@@ -535,8 +538,8 @@ h1 {
   0% {
     transform: scale(1);
   }
-  40% {
-    transform: scale(1.24);
+  30% {
+    transform: scale(1.2);
   }
   100% {
     transform: scale(1);
@@ -544,11 +547,13 @@ h1 {
 }
 
 @keyframes slide-in {
-  from {
+  0% {
     transform: translate(var(--slide-x, 0px), var(--slide-y, 0px));
+    opacity: 0.85;
   }
-  to {
+  100% {
     transform: translate(0, 0);
+    opacity: 1;
   }
 }
 
