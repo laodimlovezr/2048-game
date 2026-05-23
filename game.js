@@ -382,58 +382,17 @@ function updateBestScore() {
   if (state.score > state.bestScore) { state.bestScore = state.score; saveBestScore(); }
 }
 
-/* ── rendering: simplified tile system ── */
-let tileIdCounter = 0;
-const tiles = {};  /* tileId → { element, row, col, value } */
-let tileContainer = null;
+/* ── rendering: simple grid-based tile system ── */
+let prevBoardState = null;
 
-function getTileSize() {
-  const style = getComputedStyle(boardElement);
-  const gap = parseFloat(style.gap) || 8;
-  const padding = parseFloat(style.paddingLeft) || 0;
-  const boardSize = boardElement.getBoundingClientRect().width;
-  const inner = boardSize - padding * 2;
-  const tileSize = (inner - gap * (state.size - 1)) / state.size;
-  return { tileSize, gap, padding };
+function animateMerge(element) {
+  element.classList.add('tile-merge');
+  element.addEventListener('animationend', () => element.classList.remove('tile-merge'), { once: true });
 }
 
-function createTileElement(row, col, value) {
-  const { tileSize, gap, padding } = getTileSize();
-  const el = document.createElement('div');
-  el.className = `tile tile-${value}`;
-  el.style.width = `${tileSize}px`;
-  el.style.height = `${tileSize}px`;
-  el.style.transform = `translate(${col * (tileSize + gap)}px, ${row * (tileSize + gap)}px)`;
-  el.textContent = value;
-  el.dataset.tileId = tileIdCounter++;
-  return el;
-}
-
-function updateTilePosition(el, row, col) {
-  const { tileSize, gap } = getTileSize();
-  el.style.transform = `translate(${col * (tileSize + gap)}px, ${row * (tileSize + gap)}px)`;
-}
-
-function updateTileValue(el, value) {
-  el.className = `tile tile-${value}`;
-  el.textContent = value;
-}
-
-function animateMerge(el) {
-  el.classList.add('tile-merge');
-  el.addEventListener('animationend', () => el.classList.remove('tile-merge'), { once: true });
-}
-
-function animatePop(el) {
-  el.classList.add('tile-pop');
-  el.addEventListener('animationend', () => el.classList.remove('tile-pop'), { once: true });
-}
-
-function clearAllTiles() {
-  Object.values(tiles).forEach(t => {
-    if (t.element && t.element.parentNode) t.element.parentNode.removeChild(t.element);
-  });
-  Object.keys(tiles).forEach(k => delete tiles[k]);
+function animatePop(element) {
+  element.classList.add('tile-pop');
+  element.addEventListener('animationend', () => element.classList.remove('tile-pop'), { once: true });
 }
 
 function renderScores() {
@@ -442,152 +401,69 @@ function renderScores() {
 }
 
 function renderBoard() {
-  /* Ensure tile container exists. */
-  if (!tileContainer) {
-    tileContainer = document.createElement('div');
-    tileContainer.className = 'tile-container';
-    boardElement.appendChild(tileContainer);
+  /* Clear and rebuild tiles each render. */
+  const existingTiles = boardElement.querySelectorAll('.tile');
+
+  /* Detect what changed: merges and new tiles. */
+  const prevBoard = prevBoardState || createEmptyBoard();
+  const scoreBefore = prevBoard.flat().reduce((a, b) => a + b, 0);
+  const scoreAfter = state.board.flat().reduce((a, b) => a + b, 0);
+  const scoreGain = scoreAfter - scoreBefore;
+
+  /* Find merged positions (value is double of previous). */
+  const mergedPositions = new Set();
+  if (scoreGain > 0) {
+    for (let row = 0; row < state.size; row += 1) {
+      for (let col = 0; col < state.size; col += 1) {
+        const nv = state.board[row][col];
+        const ov = prevBoard[row][col];
+        /* A merge happened if: new value > old value and position wasn't empty */
+        if (nv > 0 && ov > 0 && nv !== ov) {
+          mergedPositions.add(posKey(row, col));
+        }
+      }
+    }
   }
 
-  /* Clear old tiles and create fresh ones for current board state. */
-  clearAllTiles();
+  /* Find newly spawned positions (was empty, now has value). */
+  const newPositions = new Set();
+  for (let row = 0; row < state.size; row += 1) {
+    for (let col = 0; col < state.size; col += 1) {
+      const nv = state.board[row][col];
+      const ov = prevBoard[row][col];
+      if (nv > 0 && ov === 0 && !mergedPositions.has(posKey(row, col))) {
+        newPositions.add(posKey(row, col));
+      }
+    }
+  }
 
+  /* Remove all existing tiles. */
+  existingTiles.forEach(el => el.remove());
+
+  /* Create tiles at their current positions. */
   for (let row = 0; row < state.size; row += 1) {
     for (let col = 0; col < state.size; col += 1) {
       const value = state.board[row][col];
       if (value === 0) continue;
 
-      const el = createTileElement(row, col, value);
-      tileContainer.appendChild(el);
-      tiles[el.dataset.tileId] = { element: el, row, col, value };
+      const tile = document.createElement('div');
+      tile.className = `tile tile-${value}`;
+      tile.style.gridRowStart = String(row + 1);
+      tile.style.gridColumnStart = String(col + 1);
+      tile.textContent = String(value);
+      boardElement.appendChild(tile);
 
-      /* Pop animation for newly spawned tiles (detected by score not changing). */
-      if (!prevBoard || getEmptyCells(prevBoard).length !== getEmptyCells(state.board).length + 1) {
-        animatePop(el);
+      /* Apply appropriate animation. */
+      const key = posKey(row, col);
+      if (mergedPositions.has(key)) {
+        animateMerge(tile);
+      } else if (newPositions.has(key)) {
+        animatePop(tile);
       }
     }
   }
 
-  prevBoard = cloneBoard(state.board);
-}
-
-/* Handle move animation: show tiles sliding then merging. */
-function animateMove(oldBoard, newBoard, scoreGained) {
-  if (!tileContainer) return;
-
-  const { tileSize, gap } = getTileSize();
-
-  /* Create tiles at old positions first. */
-  clearAllTiles();
-
-  for (let row = 0; row < state.size; row += 1) {
-    for (let col = 0; col < state.size; col += 1) {
-      const value = oldBoard[row][col];
-      if (value === 0) continue;
-
-      const el = createTileElement(row, col, value);
-      tileContainer.appendChild(el);
-      tiles[el.dataset.tileId] = { element: el, row, col, value };
-    }
-  }
-
-  /* After a brief delay, move tiles to new positions and handle merges. */
-  requestAnimationFrame(() => {
-    const mergedPositions = new Set();
-    const newTileValues = {};
-
-    /* Detect merged positions (value doubled). */
-    for (let row = 0; row < state.size; row += 1) {
-      for (let col = 0; col < state.size; col += 1) {
-        const nv = newBoard[row][col];
-        const ov = oldBoard[row][col];
-        if (nv > 0 && nv !== ov) {
-          newTileValues[posKey(row, col)] = nv;
-          if (nv === ov * 2 || (ov === 0 && scoreGained > 0)) {
-            mergedPositions.add(posKey(row, col));
-          }
-        }
-      }
-    }
-
-    /* Update existing tiles: move and merge. */
-    const toRemove = [];
-    const toMerge = [];
-
-    for (const [id, t] of Object.entries(tiles)) {
-      const { element: el, row: oldRow, col: oldCol, value } = t;
-      let foundNewPos = false;
-
-      /* Find where this tile should go. */
-      for (let row = 0; row < state.size; row += 1) {
-        for (let col = 0; col < state.size; col += 1) {
-          const nv = newBoard[row][col];
-          if (nv === value && !mergedPositions.has(posKey(row, col))) {
-            /* Simple move: update position. */
-            updateTilePosition(el, row, col);
-            tiles[id].row = row;
-            tiles[id].col = col;
-            foundNewPos = true;
-            break;
-          }
-          if (mergedPositions.has(posKey(row, col)) && nv === value * 2) {
-            /* This tile is merging: move to merge position. */
-            updateTilePosition(el, row, col);
-            toMerge.push({ el, row, col, newValue: nv });
-            toRemove.push(id);
-            foundNewPos = true;
-            break;
-          }
-        }
-        if (foundNewPos) break;
-      }
-
-      if (!foundNewPos) {
-        /* Tile disappears (was merged into another). */
-        toRemove.push(id);
-        el.style.opacity = '0';
-        el.style.transform += ' scale(0.5)';
-      }
-    }
-
-    /* Remove merged source tiles after animation. */
-    setTimeout(() => {
-      toRemove.forEach(id => {
-        if (tiles[id]?.element?.parentNode) {
-          tiles[id].element.parentNode.removeChild(tiles[id].element);
-        }
-        delete tiles[id];
-      });
-
-      /* Update merged tiles: show new value with merge animation. */
-      toMerge.forEach(({ el, row, col, newValue }) => {
-        updateTileValue(el, newValue);
-        animateMerge(el);
-      });
-
-      /* Add newly spawned tile. */
-      const oldEmpty = getEmptyCells(oldBoard);
-      const newEmpty = getEmptyCells(newBoard);
-      if (newEmpty.length < oldEmpty.length) {
-        /* Find the new tile position. */
-        for (let row = 0; row < state.size; row += 1) {
-          for (let col = 0; col < state.size; col += 1) {
-            const nv = newBoard[row][col];
-            const ov = oldBoard[row][col];
-            if (nv > 0 && ov === 0) {
-              const newEl = createTileElement(row, col, nv);
-              tileContainer.appendChild(newEl);
-              tiles[newEl.dataset.tileId] = { element: newEl, row, col, value: nv };
-              animatePop(newEl);
-              break;
-            }
-          }
-        }
-      }
-
-      prevBoard = cloneBoard(newBoard);
-    }, 150);
-  });
+  prevBoardState = cloneBoard(state.board);
 }
 
 function showSwipeHint(direction) {
@@ -733,9 +609,8 @@ function undo() {
   state.gameOver = prev.gameOver;
   state.won = prev.won;
 
-  /* Clear tile tracking to force full re-render. */
-  clearAllTiles();
-  prevBoard = null;
+  /* Reset previous board state for clean render. */
+  prevBoardState = null;
 
   render();
   return true;
@@ -750,11 +625,8 @@ function startGame() {
   state.lastAutoMove = null;
   state.history = [];
 
-  /* Clear tile tracking. */
-  clearAllTiles();
-  tileContainer = null;
-  prevBoard = null;
-  tileIdCounter = 0;
+  /* Reset rendering state. */
+  prevBoardState = null;
 
   /* Create background cells. */
   boardElement.innerHTML = '';
@@ -780,37 +652,24 @@ function startGame() {
 function applyMove(direction) {
   if (state.gameOver) return false;
 
-  const oldBoard = cloneBoard(state.board);
   const result = simulateMove(state.board, direction);
   if (!result.changed || boardsEqual(result.board, state.board)) return false;
 
   /* Save state before applying the move. */
   saveHistory();
 
-  const boardBeforeRandom = result.board;
   state.board = result.board;
   state.score += result.score;
   updateBestScore();
+  addRandomTile(state.board);
 
-  /* Show move animation first, then add random tile. */
-  animateMove(oldBoard, boardBeforeRandom, result.score);
+  if (!state.won && has2048(state.board)) state.won = true;
+  if (isGameOver(state.board)) {
+    state.gameOver = true;
+    updateStats(state.board, state.score, state.won);
+  }
 
-  /* Add random tile after animation completes. */
-  setTimeout(() => {
-    addRandomTile(state.board);
-
-    if (!state.won && has2048(state.board)) state.won = true;
-    if (isGameOver(state.board)) {
-      state.gameOver = true;
-      updateStats(state.board, state.score, state.won);
-    }
-
-    renderScores();
-    renderOverlay();
-    renderControls();
-  }, 170);
-
-  renderControls();
+  render();
   return true;
 }
 

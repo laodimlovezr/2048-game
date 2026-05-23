@@ -238,20 +238,11 @@ h1 {
   background: var(--cell);
 }
 
-.tile-container {
-  position: absolute;
-  inset: var(--gap);
-  pointer-events: none;
-}
-
 .tile {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: grid;
+  place-items: center;
   font-weight: 800;
   font-size: clamp(1.4rem, 3.8vw, 2.2rem);
-  transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .tile-pop {
