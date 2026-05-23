@@ -19,18 +19,27 @@ const overlayTitleElement = document.getElementById('overlay-title');
 const overlayMessageElement = document.getElementById('overlay-message');
 const overlayButton = document.getElementById('overlay-button');
 const swipeHintElement = document.getElementById('swipe-hint');
+const undoButton = document.getElementById('undo-button');
+const themeToggleSwitch = document.getElementById('theme-toggle-switch');
+const statGamesElement = document.getElementById('stat-games');
+const statMaxTileElement = document.getElementById('stat-max-tile');
+const statAvgScoreElement = document.getElementById('stat-avg-score');
+const statWinsElement = document.getElementById('stat-wins');
 
 /* ── constants ─ */
 const GRID_SIZE = 4;
 const BEST_SCORE_KEY = '2048-best-score';
 const AUTOPLAY_UNLOCK_KEY = '2048-autoplay-unlocked';
 const AUTOPLAY_UNLOCK_CODE = 'xiaomingzuishuai';
+const THEME_KEY = '2048-theme';
+const STATS_KEY = '2048-stats';
 const DIRECTIONS = ['ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft'];
 const DIRECTION_LABELS = { ArrowUp: 'Up', ArrowRight: 'Right', ArrowDown: 'Down', ArrowLeft: 'Left' };
 const SWIPE_HINT_ARROWS = { ArrowUp: '↑', ArrowRight: '→', ArrowDown: '↓', ArrowLeft: '←' };
 const SWIPE_THRESHOLD = 28;
 const SWIPE_COOLDOWN = 180;
 const IS_TOUCH_DEVICE = 'ontouchstart' in window || window.matchMedia('(pointer: coarse)').matches;
+const MAX_UNDO_COUNT = 5;
 
 /* ── global state ── */
 const state = {
@@ -49,7 +58,66 @@ const state = {
   touchStartX: null,
   touchStartY: null,
   lastSwipeTime: 0,
+  history: [],
 };
+
+/* ── theme ── */
+function getPreferredTheme() {
+  const stored = window.localStorage.getItem(THEME_KEY);
+  if (stored === 'light' || stored === 'dark') return stored;
+  if (window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  return 'light';
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  if (themeToggleSwitch) {
+    themeToggleSwitch.setAttribute('aria-checked', theme === 'dark' ? 'true' : 'false');
+  }
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || getPreferredTheme();
+  const next = current === 'dark' ? 'light' : 'dark';
+  window.localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+}
+
+/* ── stats ── */
+function loadStats() {
+  const raw = window.localStorage.getItem(STATS_KEY);
+  if (!raw) return { games: 0, maxTile: 0, totalScore: 0, wins: 0 };
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { games: 0, maxTile: 0, totalScore: 0, wins: 0 };
+  }
+}
+
+function saveStats(stats) {
+  window.localStorage.setItem(STATS_KEY, JSON.stringify(stats));
+}
+
+function updateStats(finalBoard, finalScore, won) {
+  const stats = loadStats();
+  stats.games += 1;
+  stats.totalScore += finalScore;
+  const maxTile = Math.max(...finalBoard.flat());
+  if (maxTile > stats.maxTile) stats.maxTile = maxTile;
+  if (won) stats.wins += 1;
+  saveStats(stats);
+}
+
+function renderStats() {
+  const stats = loadStats();
+  if (statGamesElement) statGamesElement.textContent = stats.games;
+  if (statMaxTileElement) statMaxTileElement.textContent = stats.maxTile;
+  if (statAvgScoreElement) {
+    const avg = stats.games > 0 ? Math.round(stats.totalScore / stats.games) : 0;
+    statAvgScoreElement.textContent = avg;
+  }
+  if (statWinsElement) statWinsElement.textContent = stats.wins;
+}
 
 /* ── board utilities ── */
 function createEmptyBoard() {
@@ -395,8 +463,7 @@ function detectNewPositions(newBoard, oldBoard, merged) {
       }
     }
   }
-  window._debugNewPos = { newSet: [...newSet], merged: [...merged] };
-  return newSet;
+    return newSet;
 }
 
 function findSource(row, col, value, prevTiles, merged, claimedOld) {
@@ -429,19 +496,6 @@ function findSource(row, col, value, prevTiles, merged, claimedOld) {
   return bestPk;
 }
 
-window._debugFindSource = function(row, col, value, prevTiles, merged) {
-  const key = posKey(row, col);
-  if (merged.has(key)) return 'merged';
-  if (prevTiles[key] && prevTiles[key].textContent === String(value)) return 'same';
-  for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
-    const pk = posKey(row + dr, col + dc);
-    if (prevTiles[pk] && prevTiles[pk].textContent === String(value)) return 'adjacent:'+pk;
-  }
-  for (const pk of Object.keys(prevTiles)) {
-    if (prevTiles[pk].textContent === String(value)) return 'any:'+pk;
-  }
-  return 'none';
-};
 
 function renderScores() {
   scoreElement.textContent = String(state.score);
@@ -584,6 +638,7 @@ function renderOverlay() {
 }
 
 function renderControls() {
+  undoButton.disabled = !canUndo();
   autoplayPanel.classList.toggle('hidden', !state.autoplayUnlocked);
   autoplayButton.textContent = state.autoPlaying ? 'Stop Auto' : 'Auto Play';
   autoplayButton.setAttribute('aria-pressed', String(state.autoPlaying));
@@ -615,6 +670,7 @@ function openSettings() {
   state.settingsOpen = true;
   settingsModal.classList.add('is-open');
   settingsModal.setAttribute('aria-hidden', 'false');
+  renderStats();
   redeemCodeInput.focus();
 }
 
@@ -671,6 +727,40 @@ function startAutoPlay() {
   scheduleAutoPlayTick();
 }
 
+/* ── undo ── */
+function saveHistory() {
+  state.history.push({
+    board: cloneBoard(state.board),
+    score: state.score,
+    gameOver: state.gameOver,
+    won: state.won,
+  });
+  if (state.history.length > MAX_UNDO_COUNT) {
+    state.history.shift();
+  }
+}
+
+function canUndo() {
+  return state.history.length > 0 && !state.autoPlaying;
+}
+
+function undo() {
+  if (!canUndo()) return false;
+  const prev = state.history.pop();
+  state.board = prev.board;
+  state.score = prev.score;
+  state.gameOver = prev.gameOver;
+  state.won = prev.won;
+
+  /* Clear tile tracking to force full re-render. */
+  Object.values(tileMap).forEach((el) => { if (el.parentNode) el.parentNode.removeChild(el); });
+  Object.keys(tileMap).forEach((k) => delete tileMap[k]);
+  prevBoard = null;
+
+  render();
+  return true;
+}
+
 /* ── game flow ── */
 function startGame() {
   state.board = createEmptyBoard();
@@ -678,6 +768,7 @@ function startGame() {
   state.gameOver = false;
   state.won = false;
   state.lastAutoMove = null;
+  state.history = [];
 
   /* Clear tile tracking. */
   Object.values(tileMap).forEach((el) => { if (el.parentNode) el.parentNode.removeChild(el); });
@@ -703,13 +794,19 @@ function applyMove(direction) {
   const result = simulateMove(state.board, direction);
   if (!result.changed || boardsEqual(result.board, state.board)) return false;
 
+  /* Save state before applying the move. */
+  saveHistory();
+
   state.board = result.board;
   state.score += result.score;
   updateBestScore();
   addRandomTile(state.board);
 
   if (!state.won && has2048(state.board)) state.won = true;
-  if (isGameOver(state.board)) state.gameOver = true;
+  if (isGameOver(state.board)) {
+    state.gameOver = true;
+    updateStats(state.board, state.score, state.won);
+  }
 
   render();
   return true;
@@ -762,12 +859,19 @@ function handleTouchEnd(event) {
 
 function handleKeydown(event) {
   if (event.key === 'Escape' && state.settingsOpen) { closeSettings(); return; }
+  if (event.key === 'z' || event.key === 'Z') {
+    if (canUndo()) undo();
+    return;
+  }
   if (!DIRECTIONS.includes(event.key)) return;
   event.preventDefault();
   handleManualMove(event.key);
 }
 
 /* ── event bindings ── */
+undoButton.addEventListener('click', () => {
+  if (canUndo()) undo();
+});
 restartButton.addEventListener('click', startGame);
 settingsButton.addEventListener('click', openSettings);
 closeSettingsButton.addEventListener('click', closeSettings);
@@ -778,6 +882,9 @@ redeemCodeButton.addEventListener('click', unlockAutoplay);
 redeemCodeInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') unlockAutoplay();
 });
+if (themeToggleSwitch) {
+  themeToggleSwitch.addEventListener('click', toggleTheme);
+}
 autoplayButton.addEventListener('click', () => {
   if (state.autoPlaying) { stopAutoPlay(); return; }
   startAutoPlay();
@@ -799,24 +906,6 @@ if (IS_TOUCH_DEVICE && instructionsElement) {
 }
 
 state.bestScore = loadBestScore();
+applyTheme(getPreferredTheme());
 startGame();
 
-/* ── debug ── */
-window.__2048Debug = {
-  state,
-  getBestMove: () => getBestMove(state.board),
-  evaluateBoard,
-  expectimax,
-  simulateMove,
-  startAutoPlay,
-  stopAutoPlay,
-  startGame,
-  handleManualMove,
-  handleTouchStart,
-  handleTouchEnd,
-  unlockAutoplay: () => {
-    state.autoplayUnlocked = true;
-    saveAutoplayUnlocked();
-    renderControls();
-  },
-};

@@ -3,6 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#8f7a66" />
+    <meta name="description" content="Join the tiles and reach 2048!" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="2048" />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icon.svg" />
     <title>2048</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
@@ -16,6 +24,7 @@
           </div>
           <div class="controls">
             <div class="button-group">
+              <button id="undo-button" class="button button-secondary" type="button" disabled>Undo</button>
               <button id="restart-button" class="button" type="button">Restart</button>
               <button id="settings-button" class="button button-secondary" type="button">Settings</button>
             </div>
@@ -68,6 +77,31 @@
               <h2 id="settings-title">Settings</h2>
               <button id="close-settings-button" class="icon-button" type="button" aria-label="Close settings">×</button>
             </div>
+            <div class="theme-toggle">
+              <span class="theme-toggle-label">Dark mode</span>
+              <button id="theme-toggle-switch" class="theme-switch" type="button" role="switch" aria-checked="false" aria-label="Toggle dark mode"></button>
+            </div>
+            <div class="stats-panel">
+              <h3 class="stats-title">Statistics</h3>
+              <div class="stats-grid">
+                <div class="stat-item">
+                  <span class="stat-label">Games</span>
+                  <strong id="stat-games">0</strong>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Best tile</span>
+                  <strong id="stat-max-tile">0</strong>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Avg score</span>
+                  <strong id="stat-avg-score">0</strong>
+                </div>
+                <div class="stat-item">
+                  <span class="stat-label">Wins</span>
+                  <strong id="stat-wins">0</strong>
+                </div>
+              </div>
+            </div>
             <div class="redeem-panel">
               <label class="redeem-label" for="redeem-code-input">Redeem code</label>
               <div class="redeem-row">
@@ -82,5 +116,10 @@
     </main>
 
     <script src="game.js"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      }
+    </script>
   </body>
 </html>
