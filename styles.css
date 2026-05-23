@@ -251,11 +251,11 @@ h1 {
 }
 
 .tile-merge {
-  animation: merge-bounce 0.2s ease-out;
+  animation: merge-bounce 0.25s ease-out;
 }
 
 .tile-slide {
-  animation: slide-in 0.12s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  animation: slide-in 0.18s cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
 .tile-2 { background: #eee4da; color: #776e65; }

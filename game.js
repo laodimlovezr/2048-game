@@ -453,17 +453,20 @@ function detectMerges(newBoard, oldBoard, movedScore) {
 }
 
 function detectNewPositions(newBoard, oldBoard, merged) {
+  /* Only tiles that appeared in an empty cell (not from merge) are "new". */
   const newSet = new Set();
   for (let row = 0; row < state.size; row += 1) {
     for (let col = 0; col < state.size; col += 1) {
+      const key = posKey(row, col);
+      if (merged.has(key)) continue;  /* Skip merged positions - they show merge animation. */
       const nv = newBoard[row][col];
       const ov = oldBoard[row][col];
-      if (nv > 0 && ov === 0 && !merged.has(posKey(row, col))) {
-        newSet.add(posKey(row, col));
+      if (nv > 0 && ov === 0) {
+        newSet.add(key);
       }
     }
   }
-    return newSet;
+  return newSet;
 }
 
 function findSource(row, col, value, prevTiles, merged, claimedOld) {
